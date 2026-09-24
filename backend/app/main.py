@@ -5,6 +5,7 @@ from backend.app.core.config import settings
 from backend.app.core.database import Base, engine
 from backend.app.routes import auth, search, bookings, payments, whatsapp, providers, admin
 
+# Create tables if not exists
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -13,12 +14,14 @@ app = FastAPI(
     version="0.2.0",
 )
 
+# CORS — allow any origin (needed for Flutter Web dev at random ports)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,   # cannot be True with wildcard origin
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 app.include_router(auth.router,      prefix="/api/v1")
