@@ -27,8 +27,6 @@ ENV/
 Thumbs.db
 
 # Flutter
-rafiki_mobile/build/
-rafiki_mobile/.dart_tool/
 rafiki_mobile/.flutter-plugins
 rafiki_mobile/.flutter-plugins-dependencies
 
