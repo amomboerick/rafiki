@@ -3,10 +3,17 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from backend.app.core.config import settings
 
-# Fix PostgreSQL URL prefix
+# Read the DB URL from settings
 _db_url = settings.DATABASE_URL
+
+# Normalize URL prefix
 if _db_url.startswith("postgres://"):
     _db_url = _db_url.replace("postgres://", "postgresql://", 1)
+
+# 🔧 Force SQLAlchemy to use psycopg2 driver (v2), NOT psycopg (v3)
+# This prevents "ModuleNotFoundError: No module named 'psycopg'"
+if _db_url.startswith("postgresql://") and "+psycopg2" not in _db_url:
+    _db_url = _db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 # SQLite needs extra args, PostgreSQL doesn't
 _connect_args = {}
