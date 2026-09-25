@@ -7,12 +7,12 @@ from pydantic import BaseModel, Field, ConfigDict
 # ---- USER ----
 class UserRegister(BaseModel):
     full_name: str
-    phone: str = Field(..., pattern=r"^2547\d{8}$", description="Format: 2547XXXXXXXX")
+    phone: str = Field(..., pattern=r"^2547\d{8}$")
     email: Optional[str] = None
     password: str = Field(..., min_length=6)
     role: str = "client"
     county: str = "Nairobi"
-    sub_county: Optional[str] = None
+    constituency: Optional[str] = None
 
 class UserLogin(BaseModel):
     phone: str
@@ -49,6 +49,18 @@ class ProviderProfileCreate(BaseModel):
     id_number: Optional[str] = None
     id_doc_url: Optional[str] = None
     cert_doc_url: Optional[str] = None
+    location_text: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+class ProviderProfileUpdate(BaseModel):
+    bio: Optional[str] = None
+    years_experience: Optional[int] = None
+    location_text: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    photo_urls: Optional[List[str]] = None
+    is_available: Optional[bool] = None
 
 class ProviderProfileOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -57,6 +69,9 @@ class ProviderProfileOut(BaseModel):
     bio: Optional[str]
     years_experience: int
     verification_status: str
+    location_text: Optional[str]
+    latitude: Optional[float]
+    longitude: Optional[float]
     avg_rating: float
     total_reviews: int
     total_bookings: int
@@ -110,7 +125,15 @@ class BookingOut(BaseModel):
     status: str
     scheduled_at: Optional[datetime]
     total_amount: float
+    rating: Optional[int] = None
+    rating_comment: Optional[str] = None
     created_at: datetime
+
+
+# ---- REVIEW ----
+class ReviewCreate(BaseModel):
+    rating: int = Field(..., ge=1, le=5)
+    comment: Optional[str] = None
 
 
 # ---- PAYMENT ----

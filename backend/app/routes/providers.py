@@ -1,5 +1,6 @@
 # backend/app/routes/providers.py
 from typing import List
+import json
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -10,7 +11,7 @@ from backend.app.models import (
     Service, ServiceCategory
 )
 from backend.app.schemas import (
-    ProviderProfileCreate, ProviderProfileOut,
+    ProviderProfileCreate, ProviderProfileUpdate, ProviderProfileOut,
     ServiceCreate, ServiceOut
 )
 
@@ -30,8 +31,37 @@ def _current_user(cred: HTTPAuthorizationCredentials, db: Session) -> User:
     return user
 
 
+def _profile_to_out(profile: ProviderProfile, user: User) -> dict:
+    """Convert a profile to a dict with parsed photo_urls."""
+    photos = []
+    if profile.photo_urls:
+        try:
+            photos = json.loads(profile.photo_urls)
+        except Exception:
+            photos = []
+    return {
+        "id": profile.id,
+        "user_id": profile.user_id,
+        "full_name": user.full_name,
+        "phone": user.phone,
+        "county": user.county,
+        "constituency": user.constituency,
+        "bio": profile.bio,
+        "years_experience": profile.years_experience,
+        "verification_status": profile.verification_status.value,
+        "location_text": profile.location_text,
+        "latitude": profile.latitude,
+        "longitude": profile.longitude,
+        "photo_urls": photos,
+        "avg_rating": profile.avg_rating,
+        "total_reviews": profile.total_reviews,
+        "total_bookings": profile.total_bookings,
+        "is_available": profile.is_available,
+    }
+
+
 # ---------- PROFILE ----------
-@router.get("/me", response_model=ProviderProfileOut)
+@router.get("/me")
 def get_my_profile(
     cred: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db),
@@ -41,11 +71,11 @@ def get_my_profile(
         raise HTTPException(403, "Only providers have profiles")
     profile = db.query(ProviderProfile).filter_by(user_id=user.id).first()
     if not profile:
-        raise HTTPException(404, "Profile not created yet — POST /providers/profile first")
-    return ProviderProfileOut.model_validate(profile)
+        raise HTTPException(404, "Profile not created yet")
+    return _profile_to_out(profile, user)
 
 
-@router.post("/profile", response_model=ProviderProfileOut, status_code=201)
+@router.post("/profile", status_code=201)
 def create_profile(
     data: ProviderProfileCreate,
     cred: HTTPAuthorizationCredentials = Depends(bearer),
@@ -57,7 +87,7 @@ def create_profile(
 
     existing = db.query(ProviderProfile).filter_by(user_id=user.id).first()
     if existing:
-        raise HTTPException(400, "Profile already exists — use PATCH to update")
+        raise HTTPException(400, "Profile already exists — use PATCH")
 
     profile = ProviderProfile(
         user_id=user.id,
@@ -66,17 +96,20 @@ def create_profile(
         id_number=data.id_number,
         id_doc_url=data.id_doc_url,
         cert_doc_url=data.cert_doc_url,
+        location_text=data.location_text,
+        latitude=data.latitude,
+        longitude=data.longitude,
         verification_status=VerificationStatus.pending,
     )
     db.add(profile)
     db.commit()
     db.refresh(profile)
-    return ProviderProfileOut.model_validate(profile)
+    return _profile_to_out(profile, user)
 
 
-@router.patch("/profile", response_model=ProviderProfileOut)
+@router.patch("/profile")
 def update_profile(
-    data: ProviderProfileCreate,
+    data: ProviderProfileUpdate,
     cred: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db),
 ):
@@ -84,11 +117,31 @@ def update_profile(
     profile = db.query(ProviderProfile).filter_by(user_id=user.id).first()
     if not profile:
         raise HTTPException(404, "Profile not found")
-    for field, value in data.model_dump(exclude_unset=True).items():
-        setattr(profile, field, value)
+
+    # Simple fields
+    if data.bio is not None:
+        profile.bio = data.bio
+    if data.years_experience is not None:
+        profile.years_experience = data.years_experience
+    if data.location_text is not None:
+        profile.location_text = data.location_text
+    if data.latitude is not None:
+        profile.latitude = data.latitude
+    if data.longitude is not None:
+        profile.longitude = data.longitude
+    if data.is_available is not None:
+        profile.is_available = data.is_available
+
+    # photo_urls is a list — store as JSON
+    if data.photo_urls is not None:
+        profile.photo_urls = json.dumps(data.photo_urls)
+
+    # County / constituency live on the User, not the Profile
+    # (accept via a separate path — leaving for Phase 3)
+
     db.commit()
     db.refresh(profile)
-    return ProviderProfileOut.model_validate(profile)
+    return _profile_to_out(profile, user)
 
 
 @router.patch("/availability")
@@ -143,6 +196,30 @@ def add_service(
         price_unit=data.price_unit,
     )
     db.add(svc)
+    db.commit()
+    db.refresh(svc)
+    return ServiceOut.model_validate(svc)
+
+
+@router.put("/services/{service_id}", response_model=ServiceOut)
+def update_service(
+    service_id: int,
+    data: ServiceCreate,
+    cred: HTTPAuthorizationCredentials = Depends(bearer),
+    db: Session = Depends(get_db),
+):
+    user = _current_user(cred, db)
+    profile = db.query(ProviderProfile).filter_by(user_id=user.id).first()
+    if not profile:
+        raise HTTPException(404, "Profile not found")
+    svc = db.query(Service).filter_by(id=service_id, provider_id=profile.id).first()
+    if not svc:
+        raise HTTPException(404, "Service not found or not yours")
+    svc.category_id = data.category_id
+    svc.title = data.title
+    svc.description = data.description
+    svc.base_price = data.base_price
+    svc.price_unit = data.price_unit
     db.commit()
     db.refresh(svc)
     return ServiceOut.model_validate(svc)
