@@ -22,7 +22,7 @@ def register(data: UserRegister, db: Session = Depends(get_db)):
         hashed_password=hash_password(data.password),
         role=role,
         county=data.county,
-        sub_county=data.sub_county,
+        constituency=data.constituency,     # ← renamed from sub_county
     )
     db.add(user)
     db.commit()
