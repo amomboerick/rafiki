@@ -55,7 +55,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), default=UserRole.client, nullable=False)
     county = Column(String(50), default="Nairobi")
-    sub_county = Column(String(80), nullable=True)
+    constituency = Column(String(80), nullable=True)   # was sub_county
     ward = Column(String(80), nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
@@ -73,7 +73,7 @@ class ServiceCategory(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(80), unique=True, nullable=False)
     slug = Column(String(80), unique=True, index=True)
-    category_group = Column(String(50))                # ← renamed from 'group'
+    category_group = Column(String(50))
     icon = Column(String(80), nullable=True)
     default_deposit_pct = Column(Integer, default=0)
 
@@ -90,6 +90,11 @@ class ProviderProfile(Base):
     id_number = Column(String(20), nullable=True)
     id_doc_url = Column(String(255), nullable=True)
     cert_doc_url = Column(String(255), nullable=True)
+    # NEW: photos + location text
+    photo_urls = Column(Text, nullable=True)          # JSON-encoded array of URLs
+    location_text = Column(String(255), nullable=True)  # "Westlands, Nairobi"
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     avg_rating = Column(Float, default=0.0)
     total_reviews = Column(Integer, default=0)
     total_bookings = Column(Integer, default=0)
@@ -135,6 +140,9 @@ class Booking(Base):
     longitude = Column(Float, nullable=True)
     notes = Column(Text, nullable=True)
     total_amount = Column(Numeric(10, 2), nullable=False)
+    # NEW: rating captured after service completes
+    rating = Column(Integer, nullable=True)
+    rating_comment = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("User", foreign_keys=[client_id], back_populates="bookings_as_client")
