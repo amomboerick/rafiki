@@ -31,14 +31,16 @@ def _current_user(cred: HTTPAuthorizationCredentials, db: Session) -> User:
     return user
 
 
+def _parse_photos(raw):
+    if not raw:
+        return []
+    try:
+        return json.loads(raw)
+    except Exception:
+        return []
+
+
 def _profile_to_out(profile: ProviderProfile, user: User) -> dict:
-    """Convert a profile to a dict with parsed photo_urls."""
-    photos = []
-    if profile.photo_urls:
-        try:
-            photos = json.loads(profile.photo_urls)
-        except Exception:
-            photos = []
     return {
         "id": profile.id,
         "user_id": profile.user_id,
@@ -52,7 +54,7 @@ def _profile_to_out(profile: ProviderProfile, user: User) -> dict:
         "location_text": profile.location_text,
         "latitude": profile.latitude,
         "longitude": profile.longitude,
-        "photo_urls": photos,
+        "photo_urls": _parse_photos(profile.photo_urls),
         "avg_rating": profile.avg_rating,
         "total_reviews": profile.total_reviews,
         "total_bookings": profile.total_bookings,
@@ -60,7 +62,55 @@ def _profile_to_out(profile: ProviderProfile, user: User) -> dict:
     }
 
 
-# ---------- PROFILE ----------
+# ---------- PUBLIC PROVIDER DETAIL ----------
+@router.get("/{provider_id}")
+def get_provider_detail(provider_id: int, db: Session = Depends(get_db)):
+    """Public provider detail — usable by clients when viewing a provider."""
+    profile = db.query(ProviderProfile).get(provider_id)
+    if not profile:
+        raise HTTPException(404, "Provider not found")
+    user = db.query(User).get(profile.user_id)
+    if not user:
+        raise HTTPException(404, "Provider user not found")
+
+    # Get all services for this provider
+    services = db.query(Service).filter_by(provider_id=profile.id, is_active=True).all()
+    services_out = []
+    for s in services:
+        cat = db.query(ServiceCategory).get(s.category_id)
+        services_out.append({
+            "id": s.id,
+            "title": s.title,
+            "description": s.description,
+            "price": float(s.base_price),
+            "price_unit": s.price_unit,
+            "category": cat.name if cat else "",
+            "category_id": s.category_id,
+        })
+
+    return {
+        "id": profile.id,
+        "user_id": profile.user_id,
+        "full_name": user.full_name,
+        "phone": user.phone,
+        "county": user.county,
+        "constituency": user.constituency,
+        "bio": profile.bio,
+        "years_experience": profile.years_experience,
+        "verification_status": profile.verification_status.value,
+        "location_text": profile.location_text,
+        "latitude": profile.latitude,
+        "longitude": profile.longitude,
+        "photo_urls": _parse_photos(profile.photo_urls),
+        "avg_rating": profile.avg_rating,
+        "total_reviews": profile.total_reviews,
+        "total_bookings": profile.total_bookings,
+        "is_available": profile.is_available,
+        "services": services_out,
+    }
+
+
+# ---------- MY PROFILE ----------
 @router.get("/me")
 def get_my_profile(
     cred: HTTPAuthorizationCredentials = Depends(bearer),
@@ -118,7 +168,6 @@ def update_profile(
     if not profile:
         raise HTTPException(404, "Profile not found")
 
-    # Simple fields
     if data.bio is not None:
         profile.bio = data.bio
     if data.years_experience is not None:
@@ -131,13 +180,8 @@ def update_profile(
         profile.longitude = data.longitude
     if data.is_available is not None:
         profile.is_available = data.is_available
-
-    # photo_urls is a list — store as JSON
     if data.photo_urls is not None:
         profile.photo_urls = json.dumps(data.photo_urls)
-
-    # County / constituency live on the User, not the Profile
-    # (accept via a separate path — leaving for Phase 3)
 
     db.commit()
     db.refresh(profile)
@@ -159,8 +203,8 @@ def toggle_availability(
     return {"is_available": profile.is_available}
 
 
-# ---------- SERVICES ----------
-@router.get("/services", response_model=List[ServiceOut])
+# ---------- MY SERVICES ----------
+@router.get("/services/list", response_model=List[ServiceOut])
 def my_services(
     cred: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db),
