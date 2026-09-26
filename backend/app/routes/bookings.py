@@ -7,9 +7,10 @@ from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
 from backend.app.core.security import decode_token
 from backend.app.models import (
-    Booking, BookingType, BookingStatus, Service, User, ProviderProfile, ServiceCategory
+    Booking, BookingType, BookingStatus, Service, User,
+    ProviderProfile, ServiceCategory, Review
 )
-from backend.app.schemas import BookingCreate, BookingOut
+from backend.app.schemas import BookingCreate, BookingOut, ReviewCreate
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
 bearer = HTTPBearer(auto_error=False)
@@ -70,7 +71,6 @@ def my_bookings(
     cred: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db),
 ):
-    """List the current user's bookings (both as client and as provider)."""
     user = _current_user(cred, db)
 
     # Client-side bookings
@@ -85,7 +85,7 @@ def my_bookings(
         .all()
     )
 
-    # Provider-side bookings (if this user is a provider)
+    # Provider-side bookings
     provider_profile = db.query(ProviderProfile).filter_by(user_id=user.id).first()
     provider_bookings = []
     if provider_profile:
@@ -125,7 +125,8 @@ def my_bookings(
                 "name": pu.full_name,
                 "phone": pu.phone,
                 "county": pu.county,
-                "constituency": pu.constituency,       # ← renamed from sub_county
+                "constituency": pu.constituency,
+                "sub_county": pu.constituency,
                 "rating": pp.avg_rating,
                 "verified": pp.verification_status.value == "verified",
             },
@@ -156,19 +157,119 @@ def my_bookings(
                 "phone": cu.phone,
                 "county": cu.county,
                 "constituency": cu.constituency,
+                "sub_county": cu.constituency,
                 "rating": 0,
                 "verified": False,
             },
         })
 
-    # Sort combined list by created_at descending
     results.sort(key=lambda x: x["created_at"], reverse=True)
     return results
 
 
-@router.get("/{reference}", response_model=BookingOut)
-def get_booking(reference: str, db: Session = Depends(get_db)):
+@router.get("/{reference}")
+def get_booking_detail(reference: str, db: Session = Depends(get_db)):
+    """Full booking detail with provider + service info."""
     b = db.query(Booking).filter_by(reference=reference).first()
     if not b:
         raise HTTPException(404, "Booking not found")
-    return BookingOut.model_validate(b)
+
+    s = db.query(Service).get(b.service_id)
+    c = db.query(ServiceCategory).get(s.category_id) if s else None
+    pp = db.query(ProviderProfile).get(b.provider_id)
+    pu = db.query(User).get(pp.user_id) if pp else None
+    cu = db.query(User).get(b.client_id)
+
+    return {
+        "id": b.id,
+        "reference": b.reference,
+        "booking_type": b.booking_type.value,
+        "status": b.status.value,
+        "scheduled_at": b.scheduled_at.isoformat() if b.scheduled_at else None,
+        "address": b.address,
+        "latitude": b.latitude,
+        "longitude": b.longitude,
+        "notes": b.notes,
+        "total_amount": float(b.total_amount),
+        "rating": b.rating,
+        "rating_comment": b.rating_comment,
+        "created_at": b.created_at.isoformat(),
+        "service": {
+            "id": s.id,
+            "title": s.title,
+            "description": s.description,
+            "price": float(s.base_price),
+            "price_unit": s.price_unit,
+            "category": c.name if c else "",
+        } if s else None,
+        "provider": {
+            "id": pp.id,
+            "name": pu.full_name,
+            "phone": pu.phone,
+            "county": pu.county,
+            "constituency": pu.constituency,
+            "sub_county": pu.constituency,
+            "rating": pp.avg_rating,
+            "reviews": pp.total_reviews,
+            "verified": pp.verification_status.value == "verified",
+        } if pp and pu else None,
+        "client": {
+            "id": cu.id,
+            "name": cu.full_name,
+            "phone": cu.phone,
+        } if cu else None,
+    }
+
+
+@router.post("/{reference}/cancel")
+def cancel_booking(reference: str, db: Session = Depends(get_db)):
+    b = db.query(Booking).filter_by(reference=reference).first()
+    if not b:
+        raise HTTPException(404, "Booking not found")
+    if b.status not in (BookingStatus.pending, BookingStatus.accepted):
+        raise HTTPException(400, "Only pending or accepted bookings can be cancelled")
+    b.status = BookingStatus.cancelled
+    db.commit()
+    return {"cancelled": reference, "status": "cancelled"}
+
+
+@router.post("/{reference}/review")
+def submit_review(
+    reference: str,
+    data: ReviewCreate,
+    db: Session = Depends(get_db),
+):
+    b = db.query(Booking).filter_by(reference=reference).first()
+    if not b:
+        raise HTTPException(404, "Booking not found")
+    if b.status != BookingStatus.completed:
+        raise HTTPException(400, "Can only review completed bookings")
+    if b.rating is not None:
+        raise HTTPException(400, "This booking already has a review")
+
+    # Save to booking
+    b.rating = data.rating
+    b.rating_comment = data.comment
+    db.commit()
+
+    # Also create Review row
+    review = Review(
+        booking_id=b.id,
+        client_id=b.client_id,
+        provider_id=b.provider_id,
+        rating=data.rating,
+        comment=data.comment,
+    )
+    db.add(review)
+
+    # Update provider's avg_rating
+    pp = db.query(ProviderProfile).get(b.provider_id)
+    if pp:
+        all_reviews = db.query(Review).filter_by(provider_id=pp.id).all()
+        total = sum(r.rating for r in all_reviews) + data.rating
+        count = len(all_reviews) + 1
+        pp.avg_rating = round(total / count, 2)
+        pp.total_reviews = count
+
+    db.commit()
+    return {"ok": True, "rating": data.rating}
