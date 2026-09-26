@@ -21,7 +21,7 @@ def search_services(
     q: Optional[str] = None,
     category: Optional[str] = None,
     county: Optional[str] = None,
-    sub_county: Optional[str] = None,
+    constituency: Optional[str] = None,      # ← renamed from sub_county
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
     min_rating: Optional[float] = None,
@@ -41,7 +41,7 @@ def search_services(
         .filter(Service.is_active == True)
     )
 
-    # ---- TEXT SEARCH: match service title OR category name OR description ----
+    # Text search: service title, category name, group, description
     if q:
         pattern = f"%{q}%"
         query = query.filter(
@@ -57,8 +57,8 @@ def search_services(
         )
     if county:
         query = query.filter(User.county.ilike(county))
-    if sub_county:
-        query = query.filter(User.sub_county.ilike(sub_county))
+    if constituency:
+        query = query.filter(User.constituency.ilike(constituency))    # ← renamed
     if min_price is not None:
         query = query.filter(Service.base_price >= min_price)
     if max_price is not None:
@@ -89,7 +89,8 @@ def search_services(
                 "id": p.id,
                 "name": p.user.full_name,
                 "county": p.user.county,
-                "sub_county": p.user.sub_county,
+                "constituency": p.user.constituency,    # ← renamed
+                "sub_county": p.user.constituency,      # keep for backwards compat with Flutter
                 "rating": p.avg_rating,
                 "reviews": p.total_reviews,
                 "verified": p.verification_status == VerificationStatus.verified,

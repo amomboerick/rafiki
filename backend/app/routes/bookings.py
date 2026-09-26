@@ -70,10 +70,11 @@ def my_bookings(
     cred: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db),
 ):
-    """List the current user's bookings, enriched with provider + service info."""
+    """List the current user's bookings (both as client and as provider)."""
     user = _current_user(cred, db)
 
-    rows = (
+    # Client-side bookings
+    client_bookings = (
         db.query(Booking, Service, ServiceCategory, ProviderProfile, User)
         .join(Service, Booking.service_id == Service.id)
         .join(ServiceCategory, Service.category_id == ServiceCategory.id)
@@ -84,11 +85,27 @@ def my_bookings(
         .all()
     )
 
+    # Provider-side bookings (if this user is a provider)
+    provider_profile = db.query(ProviderProfile).filter_by(user_id=user.id).first()
+    provider_bookings = []
+    if provider_profile:
+        provider_bookings = (
+            db.query(Booking, Service, ServiceCategory, User)
+            .join(Service, Booking.service_id == Service.id)
+            .join(ServiceCategory, Service.category_id == ServiceCategory.id)
+            .join(User, Booking.client_id == User.id)
+            .filter(Booking.provider_id == provider_profile.id)
+            .order_by(Booking.created_at.desc())
+            .all()
+        )
+
     results = []
-    for b, s, c, pp, pu in rows:
+
+    for b, s, c, pp, pu in client_bookings:
         results.append({
             "id": b.id,
             "reference": b.reference,
+            "role": "client",
             "booking_type": b.booking_type.value,
             "status": b.status.value,
             "scheduled_at": b.scheduled_at.isoformat() if b.scheduled_at else None,
@@ -108,11 +125,44 @@ def my_bookings(
                 "name": pu.full_name,
                 "phone": pu.phone,
                 "county": pu.county,
-                "sub_county": pu.sub_county,
+                "constituency": pu.constituency,       # ← renamed from sub_county
                 "rating": pp.avg_rating,
                 "verified": pp.verification_status.value == "verified",
             },
         })
+
+    for b, s, c, cu in provider_bookings:
+        results.append({
+            "id": b.id,
+            "reference": b.reference,
+            "role": "provider",
+            "booking_type": b.booking_type.value,
+            "status": b.status.value,
+            "scheduled_at": b.scheduled_at.isoformat() if b.scheduled_at else None,
+            "address": b.address,
+            "notes": b.notes,
+            "total_amount": float(b.total_amount),
+            "created_at": b.created_at.isoformat(),
+            "service": {
+                "id": s.id,
+                "title": s.title,
+                "price": float(s.base_price),
+                "price_unit": s.price_unit,
+                "category": c.name,
+            },
+            "provider": {
+                "id": 0,
+                "name": cu.full_name,
+                "phone": cu.phone,
+                "county": cu.county,
+                "constituency": cu.constituency,
+                "rating": 0,
+                "verified": False,
+            },
+        })
+
+    # Sort combined list by created_at descending
+    results.sort(key=lambda x: x["created_at"], reverse=True)
     return results
 
 
